@@ -12,15 +12,15 @@ type Cache struct {
 	lock sync.RWMutex
 }
 
-// New creates an LRU of the given size.
-func New(size int) (*Cache, error) {
-	return NewWithEvict(size, nil)
+// New creates an LRU with max cost.
+func New(maxCost int64) (*Cache, error) {
+	return NewWithEvict(maxCost, nil)
 }
 
-// NewWithEvict constructs a fixed size cache with the given eviction
+// NewWithEvict constructs a max cost cache with the given eviction
 // callback.
-func NewWithEvict(size int, onEvicted func(key interface{}, value interface{})) (*Cache, error) {
-	lru, err := simplelru.NewLRU(size, simplelru.EvictCallback(onEvicted))
+func NewWithEvict(maxCost int64, onEvicted func(key interface{}, value interface{}, cost int64)) (*Cache, error) {
+	lru, err := simplelru.NewLRU(maxCost, simplelru.EvictCallback(onEvicted))
 	if err != nil {
 		return nil, err
 	}
@@ -37,10 +37,10 @@ func (c *Cache) Purge() {
 	c.lock.Unlock()
 }
 
-// Add adds a value to the cache. Returns true if an eviction occurred.
-func (c *Cache) Add(key, value interface{}) (evicted bool) {
+// Add adds a value to the cache. Returns number of evicted elements
+func (c *Cache) Add(key, value interface{}, cost int64) (evicted int) {
 	c.lock.Lock()
-	evicted = c.lru.Add(key, value)
+	evicted = c.lru.Add(key, value, cost)
 	c.lock.Unlock()
 	return evicted
 }
@@ -74,30 +74,30 @@ func (c *Cache) Peek(key interface{}) (value interface{}, ok bool) {
 // ContainsOrAdd checks if a key is in the cache without updating the
 // recent-ness or deleting it for being stale, and if not, adds the value.
 // Returns whether found and whether an eviction occurred.
-func (c *Cache) ContainsOrAdd(key, value interface{}) (ok, evicted bool) {
+func (c *Cache) ContainsOrAdd(key, value interface{}, cost int64) (ok bool, evicted int) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
 	if c.lru.Contains(key) {
-		return true, false
+		return true, 0
 	}
-	evicted = c.lru.Add(key, value)
+	evicted = c.lru.Add(key, value, cost)
 	return false, evicted
 }
 
 // PeekOrAdd checks if a key is in the cache without updating the
 // recent-ness or deleting it for being stale, and if not, adds the value.
 // Returns whether found and whether an eviction occurred.
-func (c *Cache) PeekOrAdd(key, value interface{}) (previous interface{}, ok, evicted bool) {
+func (c *Cache) PeekOrAdd(key, value interface{}, cost int64) (previous interface{}, ok bool, evicted int) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
 	previous, ok = c.lru.Peek(key)
 	if ok {
-		return previous, true, false
+		return previous, true, 0
 	}
 
-	evicted = c.lru.Add(key, value)
+	evicted = c.lru.Add(key, value, cost)
 	return nil, false, evicted
 }
 
@@ -109,10 +109,10 @@ func (c *Cache) Remove(key interface{}) (present bool) {
 	return
 }
 
-// Resize changes the cache size.
-func (c *Cache) Resize(size int) (evicted int) {
+// Resize changes the max cost.
+func (c *Cache) Resize(maxCost int64) (evicted int) {
 	c.lock.Lock()
-	evicted = c.lru.Resize(size)
+	evicted = c.lru.Resize(maxCost)
 	c.lock.Unlock()
 	return evicted
 }

@@ -3,35 +3,39 @@ package simplelru
 import (
 	"container/list"
 	"errors"
+	"fmt"
 )
 
 // EvictCallback is used to get a callback when a cache entry is evicted
-type EvictCallback func(key interface{}, value interface{})
+type EvictCallback func(key interface{}, value interface{}, cost int64)
 
 // LRU implements a non-thread safe fixed size LRU cache
 type LRU struct {
-	size      int
-	evictList *list.List
-	items     map[interface{}]*list.Element
-	onEvict   EvictCallback
+	maxCost       int64
+	evictList     *list.List
+	evictListCost int64
+	items         map[interface{}]*list.Element
+	onEvict       EvictCallback
 }
 
 // entry is used to hold a value in the evictList
 type entry struct {
 	key   interface{}
 	value interface{}
+	cost  int64
 }
 
 // NewLRU constructs an LRU of the given size
-func NewLRU(size int, onEvict EvictCallback) (*LRU, error) {
-	if size <= 0 {
+func NewLRU(maxCost int64, onEvict EvictCallback) (*LRU, error) {
+	if maxCost <= 0 {
 		return nil, errors.New("must provide a positive size")
 	}
 	c := &LRU{
-		size:      size,
-		evictList: list.New(),
-		items:     make(map[interface{}]*list.Element),
-		onEvict:   onEvict,
+		maxCost:       maxCost,
+		evictListCost: 0,
+		evictList:     list.New(),
+		items:         make(map[interface{}]*list.Element),
+		onEvict:       onEvict,
 	}
 	return c, nil
 }
@@ -39,34 +43,39 @@ func NewLRU(size int, onEvict EvictCallback) (*LRU, error) {
 // Purge is used to completely clear the cache.
 func (c *LRU) Purge() {
 	for k, v := range c.items {
-		if c.onEvict != nil {
-			c.onEvict(k, v.Value.(*entry).value)
-		}
+		en := v.Value.(*entry)
+		c.callOnEvict(en)
 		delete(c.items, k)
 	}
 	c.evictList.Init()
+	c.evictListCost = 0
 }
 
 // Add adds a value to the cache.  Returns true if an eviction occurred.
-func (c *LRU) Add(key, value interface{}) (evicted bool) {
-	// Check for existing item
+func (c *LRU) Add(key, value interface{}, cost int64) (evicted int) {
+	// Check for existing item - cost can't be updated
 	if ent, ok := c.items[key]; ok {
 		c.evictList.MoveToFront(ent)
 		ent.Value.(*entry).value = value
-		return false
+		return 0
+	}
+
+	if cost > c.maxCost {
+		panic(fmt.Errorf("cost %d is bigger than max cost %d", cost, c.maxCost))
 	}
 
 	// Add new item
-	ent := &entry{key, value}
+	ent := &entry{key, value, cost}
 	entry := c.evictList.PushFront(ent)
+	c.evictListCost += cost
 	c.items[key] = entry
 
-	evict := c.evictList.Len() > c.size
 	// Verify size not exceeded
-	if evict {
+	for c.evictListCost > c.maxCost {
+		evicted++
 		c.removeOldest()
 	}
-	return evict
+	return evicted
 }
 
 // Get looks up a key's value from the cache.
@@ -145,17 +154,22 @@ func (c *LRU) Len() int {
 	return c.evictList.Len()
 }
 
+// Cost returns the total cost of items in the cache
+func (c *LRU) Cost() int64 {
+	return c.evictListCost
+}
+
 // Resize changes the cache size.
-func (c *LRU) Resize(size int) (evicted int) {
-	diff := c.Len() - size
-	if diff < 0 {
-		diff = 0
+func (c *LRU) Resize(maxCost int64) (evicted int) {
+	if maxCost <= 0 {
+		panic(errors.New("must provide a positive size"))
 	}
-	for i := 0; i < diff; i++ {
+	c.maxCost = maxCost
+	for c.evictListCost > c.maxCost {
+		evicted++
 		c.removeOldest()
 	}
-	c.size = size
-	return diff
+	return evicted
 }
 
 // removeOldest removes the oldest item from the cache.
@@ -171,7 +185,15 @@ func (c *LRU) removeElement(e *list.Element) {
 	c.evictList.Remove(e)
 	kv := e.Value.(*entry)
 	delete(c.items, kv.key)
-	if c.onEvict != nil {
-		c.onEvict(kv.key, kv.value)
+	c.evictListCost -= kv.cost
+	c.callOnEvict(kv)
+}
+
+// callOnEvict calls onEvict and blocks if needed
+func (c *LRU) callOnEvict(e *entry) {
+	if c.onEvict == nil {
+		return
 	}
+
+	c.onEvict(e.key, e.value, e.cost)
 }

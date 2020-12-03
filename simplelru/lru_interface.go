@@ -3,9 +3,9 @@ package simplelru
 
 // LRUCache is the interface for simple LRU cache.
 type LRUCache interface {
-	// Adds a value to the cache, returns true if an eviction occurred and
+	// Adds a value to the cache, returns number of evicted elements and
 	// updates the "recently used"-ness of the key.
-	Add(key, value interface{}) bool
+	Add(key, value interface{}, cost int64) int
 
 	// Returns key's value from the cache and
 	// updates the "recently used"-ness of the key. #value, isFound
@@ -35,6 +35,6 @@ type LRUCache interface {
 	// Clears all cache entries.
 	Purge()
 
-	// Resizes cache, returning number evicted
-	Resize(int) int
+	// Resizes coster, returning number evicted
+	Resize(int64) int
 }
