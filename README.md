@@ -17,9 +17,9 @@ Using the LRU is very simple:
 ```go
 l, _ := New(128)
 for i := 0; i < 256; i++ {
-    l.Add(i, nil)
+    l.Add(i, nil, 2)
 }
-if l.Len() != 128 {
+if l.Len() != 64 {
     panic(fmt.Sprintf("bad len: %v", l.Len()))
 }
 ```
