@@ -1,3 +1,3 @@
-module github.com/hashicorp/golang-lru
+module github.com/treeverse/golang-lru
 
-go 1.12
+go 1.15
